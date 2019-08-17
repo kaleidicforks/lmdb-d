@@ -20,6 +20,23 @@ import lmdb;
 
 alias mode = mdb_mode_t;
 
+enum MdbFlag
+{
+	noDupData = MDB_NODUPDATA,
+	noOverwrite = MDB_NOOVERWRITE,
+	append = MDB_APPEND,
+	keyExists = MDB_KEYEXIST,
+	noTLS = MDB_NOTLS,
+	noSubdir = MDB_NOSUBDIR,
+	readOnly = MDB_RDONLY,
+	noMetasync = MDB_NOMETASYNC,
+	mapAsync = MDB_MAPASYNC,
+	noReadAhead = MDB_NORDAHEAD,
+	writeMap = MDB_WRITEMAP,
+	noMemInit = MDB_NOMEMINIT,
+	noLock = MDB_NOLOCK,
+}
+
 /* Exceptions for classes */
 
 /** Base class for LMDB exceptions */
@@ -555,11 +572,34 @@ static bool dbi_get(MDB_txn* txn, const MDB_dbi dbi, const MDB_val* key, MDB_val
  * @see http://symas.com/mdb/doc/group__mdb.html#ga4fa8573d9236d54687c61827ebf8cac0
  */
 static bool dbi_put(MDB_txn* txn, MDB_dbi dbi, MDB_val* key, MDB_val* data, uint flags = 0) {
+	import core.stdc.errno;
     const int rc = mdb_put(txn, dbi, key, data, flags);
-    if (rc != MDB_SUCCESS && rc != MDB_KEYEXIST) {
-        MbdError.raise("mdb_put", rc);
+	switch(rc)
+	{
+		case MDB_SUCCESS, MDB_KEYEXIST:
+			return (rc == MDB_SUCCESS);
+
+		case MDB_MAP_FULL:
+			MbdError.raise("mdb_put: database is full", rc);
+			assert(0);
+
+		case MDB_TXN_FULL:
+			MbdError.raise("mdb_put: transaction has too many dirty pages", rc);
+			assert(0);
+
+		case EACCES:
+			MbdError.raise("mdb_put: attempt to made to write in read-only transaction", rc);
+			assert(0);
+
+		case EINVAL:
+			MbdError.raise("mdb_put: invalid parameter specified", rc);
+			assert(0);
+
+		default:
+			MbdError.raise("mdb_put", rc);
+			assert(0);
     }
-    return (rc == MDB_SUCCESS);
+	assert(0);
 }
 
 /** Wrapper for mdb_del
@@ -683,6 +723,11 @@ public:
     this() nothrow {
     }
 
+	auto handle()
+	{
+		return &_val;
+	}
+
     /** Constructor. Expects a D string */
     this(const string data) nothrow {
         this(toStringz(data), data.sizeof);
@@ -710,17 +755,17 @@ public:
 
     /** Determines whether this value is empty. */
     bool empty() const nothrow {
-        return _val.size() == 0;
+        return _val.mv_size == 0;
     }
 
     /** Returns the size of the data. */
     size_t size() const nothrow {
-        return _val.size();
+        return _val.mv_size;
     }
 
     /** Returns a pointer to the embedded struct */
     T* data(T)() nothrow {
-        return _val.data(T)();
+        return cast(T*) _val.mv_data;
     }
 
     /** Assigns the value. */
@@ -1236,9 +1281,9 @@ public:
    */
     bool put(K, V)(MDB_txn* txn, const ref K key, const ref V val,
             const uint flags = default_put_flags) {
-        const MdbVal k = new MdbVal(&key, sizeof(K));
-        MdbVal v = new MdbVal(&val, sizeof(V));
-        return dbi_put(txn, handle(), k, v, flags);
+        MdbVal k = new MdbVal(&key, K.sizeof);
+        MdbVal v = new MdbVal(&val, V.sizeof);
+        return dbi_put(txn, handle(), k.handle, v.handle, flags);
     }
 
     /**
@@ -1252,7 +1297,7 @@ public:
    */
     bool put(V)(MDB_txn* txn, const char* key, const ref V val, const uint flags = default_put_flags) {
         const MdbVal k = new MdbVal(key, strlen(key));
-        MdbVal v = new MdbVal(&val, sizeof(V));
+        MdbVal v = new MdbVal(&val, V.sizeof);
         return dbi_put(txn, handle(), k, v, flags);
     }
 
@@ -1335,7 +1380,7 @@ public:
         try {
             close();
         } catch (Exception ex) {
-            writefln("Catched a exception '%s'", ex.msg);
+            writefln("Caught an exception '%s'", ex.msg);
         }
     }
 
