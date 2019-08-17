@@ -22,16 +22,16 @@ Todos:
 Example:
 
 ```d
+import std.stdio;
+import lmdb;
+import lmdb_oo;
+import std.exception;
+import core.stdc.errno;
+import std.conv : to;
+import std.string : toStringz;
 
 void main()
 {
-	import std.stdio;
-	import lmdb;
-	import lmdb_oo;
-	import std.exception;
-	import core.stdc.errno;
-	import std.conv : to;
-
 	auto env = MdbEnv.create(0);
 	env.open("test.lmdb",0);
 	env.set_mapsize(1UL * 1024UL * 1024UL * 1024UL); // 1GB
@@ -42,14 +42,30 @@ void main()
 	auto data = new MDB_val("bar.foo");
 	enforce(dbi.put(txn.handle,key,data,0) == true);
 	*/
-	auto key2 = MDB_val(cast(void*) "foo".ptr,3UL);
-	auto val2 = MDB_val(cast(void*)"bar".ptr,3UL);
-	enforce(mdb_put(txn.handle,dbi.handle,&key2,&val2,0) == 0, "C put failed");
+	foreach(i;0..1000)
+	{
+		auto k = "foo-" ~ i.to!string;
+		auto v = "bar-" ~ i.to!string;
+		auto key2 = MDB_val(cast(void*)k.toStringz ,k.length);
+		auto val2 = MDB_val(cast(void*)v.toStringz,v.length);
+		enforce(mdb_put(txn.handle,dbi.handle,&key2,&val2,0) == 0, "C put failed");
+	}
 	txn.commit();
 	writeln("success");
-
 	auto readtxn = MdbTxn.begin(env.handle,null,MdbFlag.readOnly);
 	auto cursor = MdbCursor.open(readtxn.handle,dbi.handle);
+
+	auto needle = MDB_val(cast(void*)("foo-666".ptr),7UL);
+	auto val4 = cursor.get(&needle,null,MDB_cursor_op.MDB_SET);
+	writeln(val4);
+	read(dbi,env,cursor);
+	cursor.close();
+	readtxn.abort();
+}
+
+
+void read(MdbDbi dbi, MdbEnv env, MdbCursor cursor)
+{
 	auto key3 = new MdbVal("");
 	auto val3 = new MdbVal("");
 	auto keyHandle = key3.handle();
@@ -60,8 +76,6 @@ void main()
 		auto sizeVal = val3.size();
 		writefln("%s: %s",key3.data!char[0..sizeKey], val3.data!char[0..sizeVal]);
 	}
-	cursor.close();
-	readtxn.abort();
 }
 ```
 
